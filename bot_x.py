@@ -12,49 +12,44 @@ from googletrans import Translator
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
-# ─── HTTP 서버 (Render 헬스체크용) ────────────────────────────────────────
+# ─── HTTP 서버 (헬스체크) ────────────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
-
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"OK")
 
 def run_webserver():
-    port = int(os.environ.get("PORT", 5000))
-    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
+    HTTPServer(("0.0.0.0", int(os.getenv("PORT", 5000))), Handler).serve_forever()
 
 threading.Thread(target=run_webserver, daemon=True).start()
-# ──────────────────────────────────────────────────────────────────────────
 
-# ─── 환경변수 로드 ─────────────────────────────────────────────────────────
+# ─── 환경변수 & RSS 인스턴스 설정 ─────────────────────────────────────────
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID    = int(os.getenv("DISCORD_CHANNEL_ID"))
-# ──────────────────────────────────────────────────────────────────────────
 
-# ─── Nitter 인스턴스 리스트 & RSS 경로 ────────────────────────────────────
-RSS_URL = "https://twitrss.1d4.us/twitter_user_to_rss/?user=elonmusk"
+BASE_URLS = [
+    "https://nitter.snopyta.org",
+    "https://nitter.1d4.us",
+    "https://nitter.it",
+    "https://nitter.net"
+]
 USER      = "elonmusk"
 RSS_PATH  = f"/{USER}/rss"
 # ──────────────────────────────────────────────────────────────────────────
 
-# ─── requests 세션 + retry 설정 ─────────────────────────────────────────────
+# ─── requests 세션 + 재시도 설정 ────────────────────────────────────────────
 session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0"})
-retries = Retry(
-    total=5,
-    backoff_factor=1,
-    status_forcelist=[502, 503, 504],
-    allowed_methods=["GET"]
-)
+retries = Retry(total=5, backoff_factor=1, status_forcelist=[502,503,504], allowed_methods=["GET"])
 session.mount("https://", HTTPAdapter(max_retries=retries))
 # ──────────────────────────────────────────────────────────────────────────
 
-# ─── 디스코드 & 번역기 초기화 ──────────────────────────────────────────────
+# ─── Discord & Translator ─────────────────────────────────────────────────
 translator = Translator()
 intents    = discord.Intents.default()
 intents.message_content = True
@@ -69,25 +64,23 @@ async def check_elon_rss():
     print("✅ on_ready fired → starting RSS loop", flush=True)
 
     channel = bot.get_channel(CHANNEL_ID)
-    if channel is None:
+    if not channel:
         print(f"❌ Channel {CHANNEL_ID} not found!", flush=True)
         return
 
     while True:
         print(f"[DEBUG] Fetching RSS… last_entry_id={last_entry_id}", flush=True)
-
         feed = None
-        # 살아 있는 인스턴스 하나 골라서 feedparser.parse
         for base in BASE_URLS:
             url = base + RSS_PATH
             try:
-                resp = session.get(url, timeout=10)
-                if resp.status_code == 200:
-                    feed = feedparser.parse(resp.content)
+                r = session.get(url, timeout=10)
+                if r.status_code == 200:
+                    feed = feedparser.parse(r.content)
                     print(f"[DEBUG] Fetched from {base}", flush=True)
                     break
                 else:
-                    print(f"[WARN] {base} returned {resp.status_code}", flush=True)
+                    print(f"[WARN] {base} returned {r.status_code}", flush=True)
             except Exception as e:
                 print(f"[WARN] {base} error:", e, flush=True)
 
@@ -99,7 +92,6 @@ async def check_elon_rss():
         entries = feed.entries
         print(f"[DEBUG] Retrieved {len(entries)} entries", flush=True)
 
-        # 새로운 글만
         new_entries = []
         for e in entries:
             if last_entry_id is None or e.id != last_entry_id:
@@ -108,18 +100,17 @@ async def check_elon_rss():
                 break
         print(f"[DEBUG] New entries to send: {len(new_entries)}", flush=True)
 
-        # 전송
         for e in reversed(new_entries):
-            published = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
-            text      = e.title
-            ko        = translator.translate(text, dest="ko").text
-            url       = e.link
+            pub = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
+            text = e.title
+            ko   = translator.translate(text, dest="ko").text
+            link = e.link
 
             msg = (
-                f"🚀 **Elon Musk** at {published.strftime('%Y-%m-%d %H:%M')} UTC\n\n"
+                f"🚀 **Elon Musk** at {pub.strftime('%Y-%m-%d %H:%M')} UTC\n\n"
                 f"원문 : \"{text}\"\n"
                 f"번역 : \"{ko}\"\n"
-                f"트윗링크 : \"{url}\""
+                f"트윗링크 : \"{link}\""
             )
             await channel.send(msg)
 
