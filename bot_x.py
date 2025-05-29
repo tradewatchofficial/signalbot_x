@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import discord
-import feedparser
 from dotenv import load_dotenv
+import feedparser
+import requests
 from googletrans import Translator
 
 # ─── HTTP 서버 (Render Web Service 포트 바인딩용) ────────────────────────
@@ -47,23 +48,35 @@ async def check_elon_rss():
     channel = bot.get_channel(CHANNEL_ID)
 
     while True:
-        feed = feedparser.parse(RSS_URL)
-        entries = feed.entries
+        # ─── requests로 헤더 붙여서 RSS 가져오기 ────────────────────
+        try:
+            resp = requests.get(
+                RSS_URL,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=10
+            )
+            feed = feedparser.parse(resp.content)
+        except Exception as e:
+            print("❌ RSS fetch error:", e)
+            await asyncio.sleep(60)
+            continue
+        # ───────────────────────────────────────────────────────────
 
+        entries = feed.entries
         new_entries = []
         for e in entries:
-            # 첫 실행 땐 last_entry_id=None → 가장 최신만 처리
+            # 첫 실행 땐 last_entry_id=None → 최신 글만 처리
             if last_entry_id is None or e.id != last_entry_id:
                 new_entries.append(e)
             else:
                 break
 
-        # 새로운 순서대로(오래된 것부터)
+        # 오래된 순서대로(오래된 것부터) 전송
         for e in reversed(new_entries):
-            # RSS published 파싱 (string → datetime)
+            # RSS published 파싱 (struct_time → datetime with UTC)
             published = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
             text      = e.title
-            # 실제 번역
+            # 실제 한국어 번역
             ko        = translator.translate(text, dest="ko").text
             url       = e.link
 
@@ -75,11 +88,11 @@ async def check_elon_rss():
             )
             await channel.send(msg)
 
-        # 가장 최신 entry.id 로 업데이트
+        # 최신 entry.id로 업데이트
         if entries:
             last_entry_id = entries[0].id
 
-        # 1분마다 체크 (원하시면 더 길게 늘리세요)
+        # 1분마다 체크 (필요시 더 길게 조정)
         await asyncio.sleep(60)
 
 @bot.event
