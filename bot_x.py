@@ -34,7 +34,17 @@ threading.Thread(target=run_webserver, daemon=True).start()
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID    = int(os.getenv("DISCORD_CHANNEL_ID"))
-RSS_URL       = "https://nitter.snopyta.org/elonmusk/rss"  # 변경된 Nitter 인스턴스
+# ──────────────────────────────────────────────────────────────────────────
+
+# ─── Nitter 인스턴스 리스트 & RSS 경로 ────────────────────────────────────
+BASE_URLS = [
+    "https://nitter.snopyta.org",
+    "https://nitter.1d4.us",
+    "https://nitter.it",
+    "https://nitter.net"
+]
+USER      = "elonmusk"
+RSS_PATH  = f"/{USER}/rss"
 # ──────────────────────────────────────────────────────────────────────────
 
 # ─── requests 세션 + retry 설정 ─────────────────────────────────────────────
@@ -56,7 +66,6 @@ intents.message_content = True
 bot        = discord.Client(intents=intents)
 # ──────────────────────────────────────────────────────────────────────────
 
-# 마지막으로 처리한 RSS 엔트리 ID
 last_entry_id = None
 
 async def check_elon_rss():
@@ -71,18 +80,31 @@ async def check_elon_rss():
 
     while True:
         print(f"[DEBUG] Fetching RSS… last_entry_id={last_entry_id}", flush=True)
-        try:
-            resp = session.get(RSS_URL, timeout=10)
-            feed = feedparser.parse(resp.content)
-        except Exception as e:
-            print("❌ RSS fetch error:", e, flush=True)
+
+        feed = None
+        # 살아 있는 인스턴스 하나 골라서 feedparser.parse
+        for base in BASE_URLS:
+            url = base + RSS_PATH
+            try:
+                resp = session.get(url, timeout=10)
+                if resp.status_code == 200:
+                    feed = feedparser.parse(resp.content)
+                    print(f"[DEBUG] Fetched from {base}", flush=True)
+                    break
+                else:
+                    print(f"[WARN] {base} returned {resp.status_code}", flush=True)
+            except Exception as e:
+                print(f"[WARN] {base} error:", e, flush=True)
+
+        if feed is None:
+            print("❌ RSS fetch failed on all instances", flush=True)
             await asyncio.sleep(60)
             continue
 
         entries = feed.entries
         print(f"[DEBUG] Retrieved {len(entries)} entries", flush=True)
 
-        # 새로운 글만 골라내기
+        # 새로운 글만
         new_entries = []
         for e in entries:
             if last_entry_id is None or e.id != last_entry_id:
@@ -91,7 +113,7 @@ async def check_elon_rss():
                 break
         print(f"[DEBUG] New entries to send: {len(new_entries)}", flush=True)
 
-        # 오래된 순서대로 전송
+        # 전송
         for e in reversed(new_entries):
             published = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
             text      = e.title
@@ -106,11 +128,9 @@ async def check_elon_rss():
             )
             await channel.send(msg)
 
-        # 최신 entry.id 업데이트
         if entries:
             last_entry_id = entries[0].id
 
-        # 60초마다 체크 (필요시 조정)
         await asyncio.sleep(60)
 
 @bot.event
@@ -123,6 +143,6 @@ async def on_message(message):
     if message.author.bot:
         return
     if message.content.strip() == "!ping":
-        await message.channel.send("🏓 Pong!", flush=True)
+        await message.channel.send("🏓 Pong!",)
 
 bot.run(DISCORD_TOKEN)
