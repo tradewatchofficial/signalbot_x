@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 import feedparser
 import requests
 from googletrans import Translator
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 # ─── HTTP 서버 (Render 헬스체크용) ────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
@@ -32,7 +34,19 @@ threading.Thread(target=run_webserver, daemon=True).start()
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID    = int(os.getenv("DISCORD_CHANNEL_ID"))
-RSS_URL       = "https://nitter.net/elonmusk/rss"  # 필요 시 다른 인스턴스로 교체
+RSS_URL       = "https://nitter.snopyta.org/elonmusk/rss"  # 변경된 Nitter 인스턴스
+# ──────────────────────────────────────────────────────────────────────────
+
+# ─── requests 세션 + retry 설정 ─────────────────────────────────────────────
+session = requests.Session()
+session.headers.update({"User-Agent": "Mozilla/5.0"})
+retries = Retry(
+    total=5,
+    backoff_factor=1,
+    status_forcelist=[502, 503, 504],
+    allowed_methods=["GET"]
+)
+session.mount("https://", HTTPAdapter(max_retries=retries))
 # ──────────────────────────────────────────────────────────────────────────
 
 # ─── 디스코드 & 번역기 초기화 ──────────────────────────────────────────────
@@ -49,6 +63,7 @@ async def check_elon_rss():
     global last_entry_id
     await bot.wait_until_ready()
     print("✅ on_ready fired → starting RSS loop", flush=True)
+
     channel = bot.get_channel(CHANNEL_ID)
     if channel is None:
         print(f"❌ Channel {CHANNEL_ID} not found!", flush=True)
@@ -57,11 +72,7 @@ async def check_elon_rss():
     while True:
         print(f"[DEBUG] Fetching RSS… last_entry_id={last_entry_id}", flush=True)
         try:
-            resp = requests.get(
-                RSS_URL,
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=10
-            )
+            resp = session.get(RSS_URL, timeout=10)
             feed = feedparser.parse(resp.content)
         except Exception as e:
             print("❌ RSS fetch error:", e, flush=True)
@@ -71,6 +82,7 @@ async def check_elon_rss():
         entries = feed.entries
         print(f"[DEBUG] Retrieved {len(entries)} entries", flush=True)
 
+        # 새로운 글만 골라내기
         new_entries = []
         for e in entries:
             if last_entry_id is None or e.id != last_entry_id:
@@ -79,6 +91,7 @@ async def check_elon_rss():
                 break
         print(f"[DEBUG] New entries to send: {len(new_entries)}", flush=True)
 
+        # 오래된 순서대로 전송
         for e in reversed(new_entries):
             published = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
             text      = e.title
@@ -93,9 +106,11 @@ async def check_elon_rss():
             )
             await channel.send(msg)
 
+        # 최신 entry.id 업데이트
         if entries:
             last_entry_id = entries[0].id
 
+        # 60초마다 체크 (필요시 조정)
         await asyncio.sleep(60)
 
 @bot.event
@@ -108,6 +123,6 @@ async def on_message(message):
     if message.author.bot:
         return
     if message.content.strip() == "!ping":
-        await message.channel.send("🏓 Pong!",)
+        await message.channel.send("🏓 Pong!", flush=True)
 
 bot.run(DISCORD_TOKEN)
