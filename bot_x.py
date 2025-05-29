@@ -37,12 +37,7 @@ CHANNEL_ID    = int(os.getenv("DISCORD_CHANNEL_ID"))
 # ──────────────────────────────────────────────────────────────────────────
 
 # ─── Nitter 인스턴스 리스트 & RSS 경로 ────────────────────────────────────
-BASE_URLS = [
-    "https://nitter.snopyta.org",
-    "https://nitter.1d4.us",
-    "https://nitter.it",
-    "https://nitter.net"
-]
+RSS_URL = "https://twitrss.1d4.us/twitter_user_to_rss/?user=elonmusk"
 USER      = "elonmusk"
 RSS_PATH  = f"/{USER}/rss"
 # ──────────────────────────────────────────────────────────────────────────
