@@ -1,4 +1,4 @@
 discord.py
 python-dotenv
-tweepy
+feedparser
 googletrans==4.0.0-rc1
